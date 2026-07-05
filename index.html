@@ -1,0 +1,914 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>FaultGuard – System Fault Monitor</title>
+  <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Exo+2:wght@300;400;600;700&display=swap" rel="stylesheet"/>
+  <style>
+    :root {
+      --bg:        #0b0e14;
+      --surface:   #121722;
+      --card:      #181f2e;
+      --border:    #1e2d45;
+      --accent:    #00d4ff;
+      --green:     #00e676;
+      --yellow:    #ffd740;
+      --red:       #ff4d6d;
+      --text:      #cdd6f4;
+      --muted:     #6b7a99;
+      --mono:      'Share Tech Mono', monospace;
+      --sans:      'Exo 2', sans-serif;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--sans);
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    /* ── Grid noise overlay ── */
+    body::before {
+      content: '';
+      position: fixed; inset: 0;
+      background-image:
+        linear-gradient(rgba(0,212,255,.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(0,212,255,.03) 1px, transparent 1px);
+      background-size: 40px 40px;
+      pointer-events: none; z-index: 0;
+    }
+
+    /* ── Header ── */
+    header {
+      position: relative; z-index: 10;
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 18px 32px;
+      border-bottom: 1px solid var(--border);
+      background: rgba(18,23,34,.85);
+      backdrop-filter: blur(10px);
+    }
+    .logo {
+      display: flex; align-items: center; gap: 12px;
+    }
+    .logo-icon {
+      width: 38px; height: 38px;
+      background: linear-gradient(135deg, var(--accent), #0057ff);
+      border-radius: 8px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 20px; font-weight: 700; color: #fff;
+      box-shadow: 0 0 18px rgba(0,212,255,.35);
+    }
+    .logo-text { font-size: 1.35rem; font-weight: 700; letter-spacing: 1px; color: #fff; }
+    .logo-text span { color: var(--accent); }
+
+    .header-right {
+      display: flex; align-items: center; gap: 16px;
+    }
+    .live-badge {
+      display: flex; align-items: center; gap: 6px;
+      font-family: var(--mono); font-size: .78rem; color: var(--green);
+      background: rgba(0,230,118,.1); border: 1px solid rgba(0,230,118,.25);
+      padding: 4px 12px; border-radius: 20px;
+    }
+    .live-dot {
+      width: 7px; height: 7px; border-radius: 50%;
+      background: var(--green);
+      animation: pulse 1.2s ease-in-out infinite;
+    }
+    @keyframes pulse {
+      0%,100% { opacity:1; transform:scale(1); }
+      50%      { opacity:.4; transform:scale(.7); }
+    }
+    #clock {
+      font-family: var(--mono); font-size: .85rem; color: var(--muted);
+    }
+
+    /* ── Main layout ── */
+    main {
+      position: relative; z-index: 1;
+      max-width: 1240px; margin: 0 auto;
+      padding: 32px 24px;
+      display: flex; flex-direction: column; gap: 28px;
+    }
+
+    /* ── Section label ── */
+    .section-label {
+      font-family: var(--mono); font-size: .72rem; letter-spacing: 3px;
+      color: var(--muted); text-transform: uppercase; margin-bottom: 14px;
+    }
+
+    /* ── Metric cards ── */
+    .metrics-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(270px, 1fr));
+      gap: 18px;
+    }
+    .metric-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 22px 24px;
+      position: relative; overflow: hidden;
+      transition: border-color .3s, box-shadow .3s;
+    }
+    .metric-card::before {
+      content: '';
+      position: absolute; top: 0; left: 0; right: 0; height: 3px;
+      background: var(--accent);
+      border-radius: 14px 14px 0 0;
+      transition: background .4s;
+    }
+    .metric-card.warn::before  { background: var(--yellow); }
+    .metric-card.crit::before  { background: var(--red); }
+    .metric-card.ok::before    { background: var(--green); }
+    .metric-card.warn { border-color: rgba(255,215,64,.3); box-shadow: 0 0 24px rgba(255,215,64,.06); }
+    .metric-card.crit { border-color: rgba(255,77,109,.35); box-shadow: 0 0 24px rgba(255,77,109,.1); animation: shake .4s ease; }
+    .metric-card.ok   { border-color: rgba(0,230,118,.25); }
+
+    @keyframes shake {
+      0%,100% { transform: translateX(0); }
+      25%      { transform: translateX(-4px); }
+      75%      { transform: translateX(4px); }
+    }
+
+    .card-header {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 16px;
+    }
+    .card-title {
+      display: flex; align-items: center; gap: 10px;
+      font-size: .9rem; font-weight: 600; color: var(--text);
+    }
+    .card-icon { font-size: 1.2rem; }
+    .status-chip {
+      font-family: var(--mono); font-size: .68rem; padding: 3px 10px;
+      border-radius: 20px; font-weight: 600; letter-spacing: 1px;
+      transition: all .3s;
+    }
+    .status-chip.ok   { background: rgba(0,230,118,.15); color: var(--green); border: 1px solid rgba(0,230,118,.3); }
+    .status-chip.warn { background: rgba(255,215,64,.15); color: var(--yellow); border: 1px solid rgba(255,215,64,.3); }
+    .status-chip.crit { background: rgba(255,77,109,.15); color: var(--red);    border: 1px solid rgba(255,77,109,.3); }
+
+    .metric-value {
+      font-family: var(--mono); font-size: 2.6rem; font-weight: 700;
+      line-height: 1; margin-bottom: 14px;
+      transition: color .3s;
+    }
+    .metric-value.ok   { color: var(--green); }
+    .metric-value.warn { color: var(--yellow); }
+    .metric-value.crit { color: var(--red); }
+
+    /* ── Progress bar ── */
+    .bar-track {
+      height: 8px; background: rgba(255,255,255,.06);
+      border-radius: 8px; overflow: hidden;
+    }
+    .bar-fill {
+      height: 100%; border-radius: 8px;
+      transition: width .8s cubic-bezier(.4,0,.2,1), background .4s;
+    }
+    .bar-fill.ok   { background: linear-gradient(90deg, var(--green), #00c853); }
+    .bar-fill.warn { background: linear-gradient(90deg, var(--yellow), #ff9100); }
+    .bar-fill.crit { background: linear-gradient(90deg, var(--red), #c62828); }
+
+    .card-footer {
+      margin-top: 12px;
+      font-family: var(--mono); font-size: .72rem; color: var(--muted);
+    }
+
+    /* ── Service panel ── */
+    .service-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 12px;
+    }
+    .service-item {
+      background: var(--card); border: 1px solid var(--border);
+      border-radius: 10px; padding: 14px 16px;
+      display: flex; align-items: center; gap: 12px;
+      transition: border-color .3s, box-shadow .3s;
+    }
+    .service-item.ok   { border-color: rgba(0,230,118,.2); }
+    .service-item.fail { border-color: rgba(255,77,109,.3); box-shadow: 0 0 16px rgba(255,77,109,.08); }
+    .svc-dot {
+      width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0;
+      transition: background .3s;
+    }
+    .svc-dot.ok   { background: var(--green); box-shadow: 0 0 8px var(--green); }
+    .svc-dot.fail { background: var(--red);   box-shadow: 0 0 8px var(--red); animation: pulse 1s infinite; }
+    .svc-info { flex: 1; }
+    .svc-name { font-size: .85rem; font-weight: 600; color: var(--text); }
+    .svc-status { font-family: var(--mono); font-size: .68rem; color: var(--muted); margin-top: 2px; }
+    .svc-toggle {
+      background: rgba(255,255,255,.05); border: 1px solid var(--border);
+      color: var(--muted); border-radius: 6px; padding: 4px 10px;
+      font-family: var(--mono); font-size: .68rem; cursor: pointer;
+      transition: all .2s;
+    }
+    .svc-toggle:hover { background: rgba(0,212,255,.1); color: var(--accent); border-color: var(--accent); }
+
+    /* ── Controls ── */
+    .controls-bar {
+      display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    }
+    .btn {
+      font-family: var(--mono); font-size: .78rem; padding: 9px 20px;
+      border-radius: 8px; border: 1px solid; cursor: pointer; letter-spacing: .5px;
+      transition: all .2s; font-weight: 600;
+    }
+    .btn-primary {
+      background: rgba(0,212,255,.12); color: var(--accent); border-color: rgba(0,212,255,.3);
+    }
+    .btn-primary:hover { background: rgba(0,212,255,.22); box-shadow: 0 0 16px rgba(0,212,255,.2); }
+    .btn-danger {
+      background: rgba(255,77,109,.12); color: var(--red); border-color: rgba(255,77,109,.3);
+    }
+    .btn-danger:hover { background: rgba(255,77,109,.22); }
+    .btn-success {
+      background: rgba(0,230,118,.12); color: var(--green); border-color: rgba(0,230,118,.3);
+    }
+    .btn-success:hover { background: rgba(0,230,118,.22); }
+
+    /* ── Fault log ── */
+    .fault-log {
+      background: var(--card); border: 1px solid var(--border);
+      border-radius: 14px; overflow: hidden;
+    }
+    .fault-log-header {
+      padding: 16px 22px;
+      border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .fault-log-title { font-size: .9rem; font-weight: 600; color: var(--text); }
+    .badge-count {
+      font-family: var(--mono); font-size: .72rem;
+      background: rgba(255,77,109,.2); color: var(--red);
+      border: 1px solid rgba(255,77,109,.3);
+      padding: 2px 10px; border-radius: 20px;
+    }
+    .fault-list { max-height: 260px; overflow-y: auto; }
+    .fault-list::-webkit-scrollbar { width: 4px; }
+    .fault-list::-webkit-scrollbar-track { background: transparent; }
+    .fault-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+    .fault-entry {
+      display: flex; align-items: flex-start; gap: 14px;
+      padding: 13px 22px; border-bottom: 1px solid rgba(255,255,255,.04);
+      animation: slideIn .35s ease;
+      transition: background .2s; cursor: pointer;
+    }
+    .fault-entry:hover { background: rgba(255,255,255,.03); }
+    @keyframes slideIn {
+      from { opacity:0; transform: translateX(-14px); }
+      to   { opacity:1; transform: translateX(0); }
+    }
+    .fault-level {
+      font-family: var(--mono); font-size: .65rem; padding: 3px 8px;
+      border-radius: 5px; font-weight: 700; flex-shrink: 0; margin-top: 2px;
+    }
+    .fault-level.WARN { background: rgba(255,215,64,.15); color: var(--yellow); }
+    .fault-level.CRIT { background: rgba(255,77,109,.15); color: var(--red); }
+    .fault-level.INFO { background: rgba(0,212,255,.1);   color: var(--accent); }
+    .fault-level.OK   { background: rgba(0,230,118,.1);   color: var(--green); }
+    .fault-msg { flex: 1; font-size: .82rem; color: var(--text); line-height: 1.4; }
+    .fault-time { font-family: var(--mono); font-size: .68rem; color: var(--muted); flex-shrink: 0; }
+    .empty-log {
+      padding: 40px; text-align: center;
+      font-family: var(--mono); font-size: .82rem; color: var(--muted);
+    }
+
+    /* ── AI Diagnosis Panel ── */
+    .ai-panel {
+      background: var(--card); border: 1px solid var(--border);
+      border-radius: 14px; padding: 22px 24px;
+      display: flex; flex-direction: column; gap: 14px;
+    }
+    .ai-key-row { display: flex; gap: 10px; flex-wrap: wrap; }
+    #gemini-key {
+      flex: 1; min-width: 240px;
+      background: rgba(0,0,0,.35); border: 1px solid var(--border);
+      color: var(--text); padding: 9px 14px; border-radius: 8px;
+      font-family: var(--mono); font-size: .78rem;
+    }
+    #gemini-key:focus { outline: none; border-color: var(--accent); }
+    .key-note {
+      font-family: var(--mono); font-size: .68rem; color: var(--muted); line-height: 1.5;
+    }
+    #fault-description {
+      width: 100%; resize: vertical; min-height: 70px;
+      background: rgba(0,0,0,.35); border: 1px solid var(--border);
+      color: var(--text); padding: 12px 14px; border-radius: 8px;
+      font-family: var(--sans); font-size: .85rem; line-height: 1.5;
+    }
+    #fault-description:focus { outline: none; border-color: var(--accent); }
+    .ai-btn-row { display: flex; gap: 12px; flex-wrap: wrap; }
+    .ai-result { min-height: 4px; }
+    .ai-loading, .ai-error {
+      font-family: var(--mono); font-size: .8rem; padding: 12px 4px;
+    }
+    .ai-loading { color: var(--accent); }
+    .ai-error   { color: var(--red); }
+    .ai-result-title { font-size: 1rem; font-weight: 700; color: var(--text); margin-bottom: 14px; }
+    .ai-disclaimer {
+      margin-top: 16px; font-family: var(--mono); font-size: .7rem; color: var(--yellow);
+      border-top: 1px solid var(--border); padding-top: 12px;
+    }
+
+    /* ── Fix modal ── */
+    .modal-overlay {
+      position: fixed; inset: 0; z-index: 100;
+      background: rgba(0,0,0,.75); backdrop-filter: blur(6px);
+      display: flex; align-items: center; justify-content: center;
+      padding: 24px;
+      opacity: 0; pointer-events: none;
+      transition: opacity .3s;
+    }
+    .modal-overlay.open { opacity: 1; pointer-events: all; }
+    .modal {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 18px; padding: 32px; width: 100%; max-width: 560px;
+      max-height: 90vh; overflow-y: auto;
+      transform: translateY(20px);
+      transition: transform .3s;
+      box-shadow: 0 32px 80px rgba(0,0,0,.6);
+    }
+    .modal-overlay.open .modal { transform: translateY(0); }
+    .modal-header {
+      display: flex; align-items: flex-start; justify-content: space-between;
+      margin-bottom: 24px;
+    }
+    .modal-title { font-size: 1.1rem; font-weight: 700; color: var(--text); }
+    .modal-sub { font-family: var(--mono); font-size: .72rem; color: var(--red); margin-top: 4px; }
+    .close-btn {
+      background: rgba(255,255,255,.07); border: 1px solid var(--border);
+      color: var(--muted); border-radius: 8px; width: 32px; height: 32px;
+      cursor: pointer; font-size: 1rem; display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0; transition: all .2s;
+    }
+    .close-btn:hover { color: var(--text); background: rgba(255,255,255,.12); }
+
+    .fix-steps { display: flex; flex-direction: column; gap: 14px; }
+    .fix-step {
+      display: flex; gap: 14px; align-items: flex-start;
+      animation: slideIn .3s ease both;
+    }
+    .step-num {
+      width: 28px; height: 28px; border-radius: 50%; flex-shrink: 0;
+      background: linear-gradient(135deg, var(--accent), #0057ff);
+      display: flex; align-items: center; justify-content: center;
+      font-family: var(--mono); font-size: .75rem; font-weight: 700; color: #fff;
+      box-shadow: 0 0 12px rgba(0,212,255,.3);
+    }
+    .step-body { flex: 1; }
+    .step-title { font-size: .85rem; font-weight: 600; color: var(--text); margin-bottom: 4px; }
+    .step-desc { font-size: .78rem; color: var(--muted); line-height: 1.5; }
+    .step-code {
+      margin-top: 7px;
+      background: rgba(0,0,0,.4); border: 1px solid var(--border);
+      border-radius: 7px; padding: 8px 12px;
+      font-family: var(--mono); font-size: .73rem; color: var(--accent);
+      word-break: break-all;
+    }
+
+    /* ── Footer ── */
+    footer {
+      position: relative; z-index: 1;
+      text-align: center; padding: 20px;
+      font-family: var(--mono); font-size: .72rem; color: var(--muted);
+      border-top: 1px solid var(--border);
+    }
+
+    /* ── Responsive ── */
+    @media (max-width: 600px) {
+      header { padding: 14px 16px; }
+      main   { padding: 20px 14px; }
+      .metric-value { font-size: 2rem; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- Header -->
+<header>
+  <div class="logo">
+    <div class="logo-icon">⚡</div>
+    <div class="logo-text"><span>Fault</span>Guard</div>
+  </div>
+  <div class="header-right">
+    <div class="live-badge"><div class="live-dot"></div>MONITORING</div>
+    <div id="clock">--:--:--</div>
+  </div>
+</header>
+
+<main>
+
+  <!-- Controls -->
+  <div class="controls-bar">
+    <button class="btn btn-danger"   onclick="simulateSpike()">⚠️ Simulate CPU Spike</button>
+    <button class="btn btn-danger"   onclick="simulateMemLeak()">🧠 Simulate Memory Leak</button>
+    <button class="btn btn-danger"   onclick="simulateSvcFail()">💥 Simulate Service Fail</button>
+    <button class="btn btn-success"  onclick="healAll()">✅ Heal All Systems</button>
+    <button class="btn btn-primary"  onclick="clearLog()">🗑 Clear Log</button>
+  </div>
+
+  <!-- Metric Cards -->
+  <div>
+    <div class="section-label">// System Metrics</div>
+    <div class="metrics-grid">
+
+      <!-- CPU -->
+      <div class="metric-card" id="cpu-card">
+        <div class="card-header">
+          <div class="card-title"><span class="card-icon">🖥️</span> CPU Usage</div>
+          <span class="status-chip ok" id="cpu-chip">OK</span>
+        </div>
+        <div class="metric-value ok" id="cpu-val">0%</div>
+        <div class="bar-track"><div class="bar-fill ok" id="cpu-bar" style="width:0%"></div></div>
+        <div class="card-footer" id="cpu-footer">Threshold: WARN &gt;70% · CRIT &gt;90%</div>
+      </div>
+
+      <!-- Memory -->
+      <div class="metric-card" id="mem-card">
+        <div class="card-header">
+          <div class="card-title"><span class="card-icon">🧠</span> Memory Usage</div>
+          <span class="status-chip ok" id="mem-chip">OK</span>
+        </div>
+        <div class="metric-value ok" id="mem-val">0%</div>
+        <div class="bar-track"><div class="bar-fill ok" id="mem-bar" style="width:0%"></div></div>
+        <div class="card-footer" id="mem-footer">Threshold: WARN &gt;65% · CRIT &gt;85%</div>
+      </div>
+
+      <!-- Disk -->
+      <div class="metric-card" id="disk-card">
+        <div class="card-header">
+          <div class="card-title"><span class="card-icon">💾</span> Disk Usage</div>
+          <span class="status-chip ok" id="disk-chip">OK</span>
+        </div>
+        <div class="metric-value ok" id="disk-val">0%</div>
+        <div class="bar-track"><div class="bar-fill ok" id="disk-bar" style="width:0%"></div></div>
+        <div class="card-footer" id="disk-footer">Threshold: WARN &gt;75% · CRIT &gt;92%</div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Services -->
+  <div>
+    <div class="section-label">// Running Services</div>
+    <div class="service-grid" id="services-grid"></div>
+  </div>
+
+  <!-- Fault Log -->
+  <div>
+    <div class="section-label">// Fault Log — click a fault for auto-fix instructions</div>
+    <div class="fault-log">
+      <div class="fault-log-header">
+        <div class="fault-log-title">Recent Faults</div>
+        <span class="badge-count" id="fault-count">0 faults</span>
+      </div>
+      <div class="fault-list" id="fault-list">
+        <div class="empty-log">No faults detected — system is healthy 🟢</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- AI Fault Diagnosis -->
+  <div>
+    <div class="section-label">// AI Fault Diagnosis — powered by Gemini</div>
+    <div class="ai-panel">
+      <div class="ai-key-row">
+        <input type="password" id="gemini-key" placeholder="Paste your Gemini API key (stored only in this browser)" />
+        <button class="btn btn-primary" onclick="saveGeminiKey()">Save Key</button>
+        <button class="btn btn-danger"  onclick="clearGeminiKey()">Clear Key</button>
+      </div>
+      <div class="key-note" id="key-status">
+        Your key is saved only in this browser's localStorage — it is sent directly to Google's Gemini API and nowhere else, and it is never written into this file or committed to a repo. Get a free key at aistudio.google.com, and don't reuse a key you've already shared elsewhere.
+      </div>
+
+      <textarea id="fault-description" placeholder="Describe the fault you're seeing, e.g. &quot;Nginx returns 502 whenever traffic spikes&quot; or &quot;disk usage jumped to 95% overnight&quot;..."></textarea>
+
+      <div class="ai-btn-row">
+        <button class="btn btn-primary" onclick="fillFromLatestFault()">⬆ Use latest logged fault</button>
+        <button class="btn btn-success" id="ai-submit-btn" onclick="getAiFixPlan()">🤖 Generate Fix Plan</button>
+      </div>
+
+      <div id="ai-result" class="ai-result"></div>
+    </div>
+  </div>
+
+</main>
+
+<!-- Fix Modal -->
+<div class="modal-overlay" id="modal" onclick="closeModal(event)">
+  <div class="modal">
+    <div class="modal-header">
+      <div>
+        <div class="modal-title" id="modal-title">Fix Instructions</div>
+        <div class="modal-sub"  id="modal-sub"></div>
+      </div>
+      <button class="close-btn" onclick="closeModalBtn()">✕</button>
+    </div>
+    <div class="fix-steps" id="fix-steps"></div>
+  </div>
+</div>
+
+<footer>FaultGuard v1.0 · Built for learning · Data is simulated</footer>
+
+<script>
+/* ─── State ─────────────────────────────────────────────── */
+const state = {
+  cpu:  { val: 15, spiking: false },
+  mem:  { val: 30, leaking: false },
+  disk: { val: 48 },
+};
+
+const services = [
+  { id: 'nginx',   name: 'Nginx Web Server',  status: 'ok' },
+  { id: 'mysql',   name: 'MySQL Database',    status: 'ok' },
+  { id: 'redis',   name: 'Redis Cache',       status: 'ok' },
+  { id: 'node',    name: 'Node.js App',       status: 'ok' },
+  { id: 'ssh',     name: 'SSH Daemon',        status: 'ok' },
+  { id: 'cron',    name: 'Cron Scheduler',    status: 'ok' },
+];
+
+let faults = [];
+let faultId = 0;
+
+/* ─── Fix Playbooks ─────────────────────────────────────── */
+const playbooks = {
+  cpu_warn: {
+    title: '⚠️ High CPU Usage — Fix Guide',
+    sub: 'CPU usage exceeded 70%',
+    steps: [
+      { title: 'Identify the culprit process', desc: 'Run top or htop to list processes sorted by CPU consumption.', code: 'top -o %CPU' },
+      { title: 'Check for zombie processes', desc: 'Zombie processes consume PID slots and can cause high load.', code: 'ps aux | grep Z' },
+      { title: 'Kill the offending process', desc: 'Replace <PID> with the actual process ID found in step 1.', code: 'kill -9 <PID>' },
+      { title: 'Review recent cron jobs', desc: 'A runaway cron job is a common culprit.', code: 'crontab -l && cat /var/log/syslog | grep CRON' },
+      { title: 'Monitor for 5 minutes', desc: 'Confirm CPU returns to normal after taking action.', code: 'watch -n 2 "top -bn1 | head -15"' },
+    ]
+  },
+  cpu_crit: {
+    title: '🔴 Critical CPU — Immediate Action',
+    sub: 'CPU usage exceeded 90% — system at risk',
+    steps: [
+      { title: 'IMMEDIATE: Check load average', desc: 'A load average higher than your CPU core count means the system is overwhelmed.', code: 'uptime && nproc' },
+      { title: 'Kill top CPU consumers NOW', desc: 'Find and immediately kill the top 3 CPU-eating processes.', code: "ps -eo pid,ppid,%cpu,cmd --sort=-%cpu | head -5" },
+      { title: 'Temporarily stop non-critical services', desc: 'Free up CPU by pausing optional services.', code: 'systemctl stop apache2 postfix' },
+      { title: 'Check for forkbombs or infinite loops', desc: 'Look for abnormally high process counts.', code: 'ps aux | wc -l' },
+      { title: 'Schedule a reboot if needed', desc: 'If CPU stays critical and you cannot find the cause, schedule a safe reboot.', code: 'sudo shutdown -r +1 "Rebooting to resolve CPU overload"' },
+    ]
+  },
+  mem_warn: {
+    title: '⚠️ High Memory Usage — Fix Guide',
+    sub: 'Memory usage exceeded 65%',
+    steps: [
+      { title: 'Check memory consumption per process', desc: 'Sort processes by memory to find the biggest consumers.', code: 'ps aux --sort=-%mem | head -10' },
+      { title: 'Clear the page cache (safe)', desc: 'Flushing cached memory frees RAM without killing processes.', code: 'sync && echo 3 | sudo tee /proc/sys/vm/drop_caches' },
+      { title: 'Look for memory leaks', desc: 'Check if any single process is growing over time.', code: 'watch -n 5 "ps -o pid,rss,cmd -p <PID>"' },
+      { title: 'Restart the leaking service', desc: 'If a known service is leaking, restart it gracefully.', code: 'sudo systemctl restart <service_name>' },
+    ]
+  },
+  mem_crit: {
+    title: '🔴 Critical Memory — Immediate Action',
+    sub: 'Memory usage exceeded 85% — OOM risk',
+    steps: [
+      { title: 'Check OOM Killer activity', desc: 'The OS may already be killing processes to survive.', code: 'dmesg | grep -i "out of memory"' },
+      { title: 'Add swap space immediately', desc: 'A temporary swap file can prevent a crash.', code: 'sudo fallocate -l 2G /swapfile && sudo chmod 600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile' },
+      { title: 'Kill the biggest memory consumer', desc: 'Get the PID from step and terminate it.', code: 'ps aux --sort=-%mem | awk "NR==2{print $2}" | xargs kill -9' },
+      { title: 'Disable heavy services', desc: 'Stop services that are not essential for the current task.', code: 'sudo systemctl stop mysql elasticsearch' },
+    ]
+  },
+  svc_fail: (name) => ({
+    title: `💥 Service Failure: ${name}`,
+    sub: `${name} has stopped unexpectedly`,
+    steps: [
+      { title: 'Check service status', desc: 'Get a full status report including the last error message.', code: `sudo systemctl status ${name.toLowerCase().replace(/ /g,'_')}` },
+      { title: 'View recent logs', desc: 'Inspect the last 50 log lines for the root cause.', code: `sudo journalctl -u ${name.toLowerCase().replace(/ /g,'_')} -n 50 --no-pager` },
+      { title: 'Attempt to restart the service', desc: 'A restart often resolves temporary crashes.', code: `sudo systemctl restart ${name.toLowerCase().replace(/ /g,'_')}` },
+      { title: 'Check configuration files', desc: 'A misconfiguration often prevents startup. Test config validity.', code: `sudo nginx -t  # or: mysqld --validate-config` },
+      { title: 'Enable auto-restart on failure', desc: 'Configure the service to restart automatically in future.', code: `[Service]\nRestart=always\nRestartSec=5` },
+      { title: 'Verify and re-enable on boot', desc: 'Make sure the service is enabled to start on reboot.', code: `sudo systemctl enable ${name.toLowerCase().replace(/ /g,'_')}` },
+    ]
+  }),
+  disk_warn: {
+    title: '⚠️ Disk Space Warning',
+    sub: 'Disk usage exceeded 75%',
+    steps: [
+      { title: 'Find the biggest directories', desc: 'Identify where disk space is being consumed.', code: 'du -sh /* 2>/dev/null | sort -rh | head -10' },
+      { title: 'Clear log files safely', desc: 'Old logs are a common cause of disk fill-up.', code: 'sudo journalctl --vacuum-size=200M && sudo find /var/log -name "*.gz" -delete' },
+      { title: 'Remove unused packages', desc: 'Clean up package manager cache and orphaned packages.', code: 'sudo apt autoremove && sudo apt clean' },
+      { title: 'Find and remove large stale files', desc: 'Look for files larger than 100MB that may be left-over.', code: 'sudo find / -size +100M -type f 2>/dev/null' },
+    ]
+  },
+};
+
+/* ─── Clock ─────────────────────────────────────────────── */
+function updateClock() {
+  document.getElementById('clock').textContent = new Date().toLocaleTimeString();
+}
+setInterval(updateClock, 1000); updateClock();
+
+/* ─── Render Services ───────────────────────────────────── */
+function renderServices() {
+  const grid = document.getElementById('services-grid');
+  grid.innerHTML = services.map(s => `
+    <div class="service-item ${s.status}" id="svc-${s.id}">
+      <div class="svc-dot ${s.status === 'ok' ? 'ok' : 'fail'}"></div>
+      <div class="svc-info">
+        <div class="svc-name">${s.name}</div>
+        <div class="svc-status">${s.status === 'ok' ? 'Running' : 'FAILED'}</div>
+      </div>
+      <button class="svc-toggle" onclick="toggleService('${s.id}')">
+        ${s.status === 'ok' ? 'Kill' : 'Start'}
+      </button>
+    </div>
+  `).join('');
+}
+
+function toggleService(id) {
+  const svc = services.find(s => s.id === id);
+  if (!svc) return;
+  if (svc.status === 'ok') {
+    svc.status = 'fail';
+    addFault('CRIT', `Service failure: ${svc.name}`, playbooks.svc_fail(svc.name));
+  } else {
+    svc.status = 'ok';
+    addFault('OK', `Service restored: ${svc.name}`, null);
+  }
+  renderServices();
+}
+
+/* ─── Metric updater ────────────────────────────────────── */
+function setMetric(id, val, warnT, critT) {
+  const pct  = Math.min(100, Math.max(0, val));
+  const level = pct >= critT ? 'crit' : pct >= warnT ? 'warn' : 'ok';
+  const chip  = level === 'crit' ? 'CRIT' : level === 'warn' ? 'WARN' : 'OK';
+
+  document.getElementById(`${id}-val`).textContent  = `${Math.round(pct)}%`;
+  document.getElementById(`${id}-val`).className    = `metric-value ${level}`;
+  document.getElementById(`${id}-bar`).style.width  = `${pct}%`;
+  document.getElementById(`${id}-bar`).className    = `bar-fill ${level}`;
+  document.getElementById(`${id}-chip`).textContent = chip;
+  document.getElementById(`${id}-chip`).className   = `status-chip ${level}`;
+  document.getElementById(`${id}-card`).className   = `metric-card ${level}`;
+
+  return level;
+}
+
+/* ─── Fault log ─────────────────────────────────────────── */
+function addFault(level, msg, playbook) {
+  const id = ++faultId;
+  const time = new Date().toLocaleTimeString();
+  faults.unshift({ id, level, msg, playbook, time });
+  renderLog();
+  return id;
+}
+
+function renderLog() {
+  const list = document.getElementById('fault-list');
+  const count = faults.filter(f => f.level !== 'OK' && f.level !== 'INFO').length;
+  document.getElementById('fault-count').textContent =
+    count === 0 ? '0 faults' : `${count} fault${count > 1 ? 's' : ''}`;
+
+  if (faults.length === 0) {
+    list.innerHTML = '<div class="empty-log">No faults detected — system is healthy 🟢</div>';
+    return;
+  }
+  list.innerHTML = faults.slice(0, 40).map(f => `
+    <div class="fault-entry" onclick="${f.playbook ? `openModal(${f.id})` : ''}">
+      <span class="fault-level ${f.level}">${f.level}</span>
+      <div class="fault-msg">${f.msg}${f.playbook ? ' <span style="color:var(--accent);font-size:.7rem">→ click for fix</span>' : ''}</div>
+      <div class="fault-time">${f.time}</div>
+    </div>
+  `).join('');
+}
+
+function clearLog() { faults = []; faultId = 0; renderLog(); }
+
+/* ─── Modal ─────────────────────────────────────────────── */
+function openModal(id) {
+  const f = faults.find(x => x.id === id);
+  if (!f || !f.playbook) return;
+  const pb = f.playbook;
+  document.getElementById('modal-title').textContent = pb.title;
+  document.getElementById('modal-sub').textContent   = pb.sub;
+  document.getElementById('fix-steps').innerHTML = pb.steps.map((s, i) => `
+    <div class="fix-step" style="animation-delay:${i * 60}ms">
+      <div class="step-num">${i + 1}</div>
+      <div class="step-body">
+        <div class="step-title">${s.title}</div>
+        <div class="step-desc">${s.desc}</div>
+        ${s.code ? `<div class="step-code">${s.code}</div>` : ''}
+      </div>
+    </div>
+  `).join('');
+  document.getElementById('modal').classList.add('open');
+}
+function closeModal(e) { if (e.target.id === 'modal') document.getElementById('modal').classList.remove('open'); }
+function closeModalBtn() { document.getElementById('modal').classList.remove('open'); }
+
+/* ─── Simulation Controls ───────────────────────────────── */
+let spikeTimer   = null;
+let leakInterval = null;
+
+function simulateSpike() {
+  state.cpu.spiking = true;
+  state.cpu.val = 93;
+  if (spikeTimer) clearTimeout(spikeTimer);
+  spikeTimer = setTimeout(() => { state.cpu.spiking = false; }, 12000);
+}
+
+function simulateMemLeak() {
+  state.mem.leaking = true;
+  addFault('WARN', 'Memory leak simulation started — usage climbing…', null);
+}
+
+function simulateSvcFail() {
+  const running = services.filter(s => s.status === 'ok');
+  if (running.length === 0) { addFault('INFO', 'All services already down', null); return; }
+  const svc = running[Math.floor(Math.random() * running.length)];
+  svc.status = 'fail';
+  addFault('CRIT', `Service failure detected: ${svc.name}`, playbooks.svc_fail(svc.name));
+  renderServices();
+}
+
+function healAll() {
+  state.cpu.spiking  = false;
+  state.mem.leaking  = false;
+  state.cpu.val      = 12 + Math.random() * 20;
+  state.mem.val      = 25 + Math.random() * 20;
+  services.forEach(s => s.status = 'ok');
+  renderServices();
+  addFault('OK', 'All systems healed — returning to baseline', null);
+}
+
+/* ─── Main simulation loop ──────────────────────────────── */
+let prevCpuLevel  = 'ok';
+let prevMemLevel  = 'ok';
+let prevDiskLevel = 'ok';
+
+function tick() {
+  /* CPU */
+  if (state.cpu.spiking) {
+    state.cpu.val = Math.min(100, state.cpu.val + (Math.random() * 4 - 1));
+  } else {
+    state.cpu.val += (Math.random() * 6 - 3);
+    state.cpu.val  = Math.max(5, Math.min(65, state.cpu.val));
+  }
+  const cpuLevel = setMetric('cpu', state.cpu.val, 70, 90);
+  if (cpuLevel !== prevCpuLevel) {
+    if (cpuLevel === 'warn') addFault('WARN', `CPU at ${Math.round(state.cpu.val)}% — approaching limit`, playbooks.cpu_warn);
+    if (cpuLevel === 'crit') addFault('CRIT', `CPU CRITICAL at ${Math.round(state.cpu.val)}% — system at risk!`, playbooks.cpu_crit);
+    if (cpuLevel === 'ok' && prevCpuLevel !== 'ok') addFault('OK', 'CPU returned to normal range', null);
+    prevCpuLevel = cpuLevel;
+  }
+
+  /* Memory */
+  if (state.mem.leaking) {
+    state.mem.val = Math.min(100, state.mem.val + 1.5 + Math.random() * 1.5);
+  } else {
+    state.mem.val += (Math.random() * 4 - 2);
+    state.mem.val  = Math.max(20, Math.min(75, state.mem.val));
+  }
+  const memLevel = setMetric('mem', state.mem.val, 65, 85);
+  if (memLevel !== prevMemLevel) {
+    if (memLevel === 'warn') addFault('WARN', `Memory at ${Math.round(state.mem.val)}% — monitor for leaks`, playbooks.mem_warn);
+    if (memLevel === 'crit') addFault('CRIT', `Memory CRITICAL at ${Math.round(state.mem.val)}% — OOM risk!`, playbooks.mem_crit);
+    if (memLevel === 'ok' && prevMemLevel !== 'ok') addFault('OK', 'Memory usage stabilised', null);
+    prevMemLevel = memLevel;
+  }
+
+  /* Disk (slow drift) */
+  state.disk.val += (Math.random() * .6 - .2);
+  state.disk.val  = Math.max(30, Math.min(95, state.disk.val));
+  const diskLevel = setMetric('disk', state.disk.val, 75, 92);
+  if (diskLevel !== prevDiskLevel) {
+    if (diskLevel === 'warn') addFault('WARN', `Disk at ${Math.round(state.disk.val)}% — clean up recommended`, playbooks.disk_warn);
+    if (diskLevel === 'crit') addFault('CRIT', `Disk CRITICAL at ${Math.round(state.disk.val)}% — near full!`, playbooks.disk_warn);
+    if (diskLevel === 'ok' && prevDiskLevel !== 'ok') addFault('OK', 'Disk usage dropped to safe level', null);
+    prevDiskLevel = diskLevel;
+  }
+}
+
+/* ─── AI Fault Diagnosis (Gemini) ───────────────────────── */
+const GEMINI_KEY_STORAGE = 'faultguard_gemini_api_key';
+const GEMINI_MODEL       = 'gemini-2.5-flash';
+
+function loadGeminiKey() {
+  const saved = localStorage.getItem(GEMINI_KEY_STORAGE);
+  if (saved) document.getElementById('gemini-key').value = saved;
+}
+
+function saveGeminiKey() {
+  const val = document.getElementById('gemini-key').value.trim();
+  const status = document.getElementById('key-status');
+  if (!val) { status.textContent = 'Enter a key before saving.'; return; }
+  localStorage.setItem(GEMINI_KEY_STORAGE, val);
+  status.textContent = 'Key saved in this browser only — never committed to the repo.';
+}
+
+function clearGeminiKey() {
+  localStorage.removeItem(GEMINI_KEY_STORAGE);
+  document.getElementById('gemini-key').value = '';
+  document.getElementById('key-status').textContent = 'Key cleared from this browser.';
+}
+
+function fillFromLatestFault() {
+  const latest = faults.find(f => f.level === 'WARN' || f.level === 'CRIT');
+  const box = document.getElementById('fault-description');
+  if (!latest) {
+    document.getElementById('ai-result').innerHTML =
+      '<div class="ai-error">No active WARN/CRIT fault logged yet — trigger a simulation above or type your own description.</div>';
+    return;
+  }
+  box.value = latest.msg;
+}
+
+async function getAiFixPlan() {
+  const key  = document.getElementById('gemini-key').value.trim();
+  const desc = document.getElementById('fault-description').value.trim();
+  const resultBox = document.getElementById('ai-result');
+  const btn = document.getElementById('ai-submit-btn');
+
+  if (!key)  { resultBox.innerHTML = '<div class="ai-error">Paste your Gemini API key above first.</div>'; return; }
+  if (!desc) { resultBox.innerHTML = '<div class="ai-error">Describe the fault first.</div>'; return; }
+
+  btn.disabled = true;
+  const originalLabel = btn.textContent;
+  btn.textContent = 'Thinking…';
+  resultBox.innerHTML = '<div class="ai-loading">Contacting Gemini for a fix plan…</div>';
+
+  const prompt = `You are a Linux systems troubleshooting assistant. A user reports this fault:
+"${desc}"
+
+Respond with ONLY raw JSON (no markdown fences, no commentary) in exactly this shape:
+{"title": "short fix title", "steps": [{"title": "step title", "desc": "one sentence explanation", "code": "a shell command, or an empty string if none applies"}]}
+Give 4 to 7 concrete, safe, correctly-ordered troubleshooting steps a sysadmin could run to diagnose and resolve this.`;
+
+  try {
+    const resp = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
+        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
+      }
+    );
+
+    if (!resp.ok) {
+      const errText = await resp.text();
+      throw new Error(`Gemini API error ${resp.status} — check your key and quota. (${errText.slice(0, 160)})`);
+    }
+
+    const data = await resp.json();
+    const raw = (data?.candidates?.[0]?.content?.parts || []).map(p => p.text || '').join('');
+    const cleaned = raw.replace(/```json|```/g, '').trim();
+
+    let plan;
+    try { plan = JSON.parse(cleaned); }
+    catch (e) { throw new Error('Gemini did not return valid JSON. Try rephrasing the fault description.'); }
+
+    renderAiPlan(plan);
+    addFault('INFO', `AI fix plan generated for: "${desc.slice(0, 60)}${desc.length > 60 ? '…' : ''}"`, null);
+
+  } catch (err) {
+    resultBox.innerHTML = `<div class="ai-error">⚠ ${err.message}</div>`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = originalLabel;
+  }
+}
+
+function renderAiPlan(plan) {
+  const resultBox = document.getElementById('ai-result');
+  const steps = Array.isArray(plan.steps) ? plan.steps : [];
+  resultBox.innerHTML = `
+    <div class="ai-result-title">${plan.title || 'Suggested Fix Plan'}</div>
+    <div class="fix-steps">
+      ${steps.map((s, i) => `
+        <div class="fix-step" style="animation-delay:${i * 60}ms">
+          <div class="step-num">${i + 1}</div>
+          <div class="step-body">
+            <div class="step-title">${s.title || ''}</div>
+            <div class="step-desc">${s.desc || ''}</div>
+            ${s.code ? `<div class="step-code">${s.code}</div>` : ''}
+          </div>
+        </div>
+      `).join('')}
+    </div>
+    <div class="ai-disclaimer">⚠ AI-generated suggestions — review every command before running it on a real machine. Nothing here executes automatically.</div>
+  `;
+}
+
+/* ─── Bootstrap ─────────────────────────────────────────── */
+renderServices();
+loadGeminiKey();
+addFault('INFO', 'FaultGuard started — monitoring system metrics in real time', null);
+setInterval(tick, 1800);
+tick();
+</script>
+</body>
+</html>
